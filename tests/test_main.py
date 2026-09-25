@@ -3,6 +3,7 @@
 import io
 import json
 import tempfile
+from dataclasses import replace
 import threading
 import time
 import urllib.request
@@ -95,13 +96,16 @@ def test_camera_ok_reports_no_camera_error():
     agent.request_stop()
 
 
-def test_end_to_end_capture_publish_upload(monkeypatch):
-    # NTP unavailable (as on a fresh Pi without network, or on Windows):
-    # the host's own sync state must not leak into the test — a CI runner
-    # with a synced clock would otherwise stamp the first frame "synced"
-    monkeypatch.setattr("agent.clock.AgentClock.maybe_poll_ntp", lambda self, runner=None: None)
+def test_end_to_end_capture_publish_upload(monkeypatch, tmp_path):
+    # The host must not leak into this test: NTP unavailable (a CI runner's
+    # synced clock would stamp the first frame "synced"), and a fresh cache
+    # dir — on Linux the boot id is stable, so an anchor.json another test
+    # left in the shared SETTINGS.cache_dir would count as "this boot".
+    monkeypatch.setattr(
+        "agent.clock.AgentClock.maybe_poll_ntp", lambda self, runner=None: None
+    )
     http = FakeHttp()
-    agent = Agent(SETTINGS, urlopen=http)
+    agent = Agent(replace(SETTINGS, cache_dir=str(tmp_path)), urlopen=http)
     agent.camera.start()
     agent.uploader.start()
 
