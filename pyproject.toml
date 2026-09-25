@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dam-agent"
-version = "0.1.0"
+version = "0.1.1"
 description = "days-in-a-minute capture agent for Raspberry Pi"
 requires-python = ">=3.11"
 # Device runtime only — no boto3 on devices (ADR-0003); the cloud side's
@@ -12,6 +12,8 @@ requires-python = ">=3.11"
 dependencies = [
     "python-dotenv",
     "python-ulid",
+    # python-ulid imports typing.override (3.12+) or falls back to this
+    "typing-extensions; python_version < '3.12'",
     "tzdata; platform_system == 'Windows'",
 ]
 
