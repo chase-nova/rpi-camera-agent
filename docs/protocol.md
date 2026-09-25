@@ -3,7 +3,11 @@
 Everything a device needs to know about the service: two HTTPS endpoints
 under `DAM_ENDPOINT` (default `https://device.chase-nova.com`). Bodies and
 answers are JSON (`Content-Type: application/json`). Requests are
-rate-limited per endpoint; a `429` means "back off and retry".
+rate-limited; a `429` means "back off and retry".
+
+The address is an API, not a website: opening it in a browser
+(`GET /`) only returns a short JSON description with links. Devices never
+call `GET /`.
 
 ## `POST /enroll` — once per device (and per re-enrollment)
 
