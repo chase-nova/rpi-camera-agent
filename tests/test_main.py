@@ -95,7 +95,11 @@ def test_camera_ok_reports_no_camera_error():
     agent.request_stop()
 
 
-def test_end_to_end_capture_publish_upload():
+def test_end_to_end_capture_publish_upload(monkeypatch):
+    # NTP unavailable (as on a fresh Pi without network, or on Windows):
+    # the host's own sync state must not leak into the test — a CI runner
+    # with a synced clock would otherwise stamp the first frame "synced"
+    monkeypatch.setattr("agent.clock.AgentClock.maybe_poll_ntp", lambda self, runner=None: None)
     http = FakeHttp()
     agent = Agent(SETTINGS, urlopen=http)
     agent.camera.start()
@@ -124,7 +128,7 @@ def test_end_to_end_capture_publish_upload():
     assert status["camera"] == "fake"
     assert status["agent_version"]
     # design 12: the first frame was stamped while the clock was still
-    # provisional (no timedatectl on Windows), so it was spilled, the
+    # provisional (NTP unavailable — stubbed above), so it was spilled, the
     # heartbeat fetched the signer's Date, the clock anchored, the cached
     # frame was restamped and replayed — status now shows the signer clock
     assert item.time_quality == "provisional"
