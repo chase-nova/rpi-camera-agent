@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  privacy-guard:
+    # Blocks private identifiers from ever landing here. The pattern lives in
+    # the DENYLIST repository secret (it would defeat itself if committed);
+    # without it (e.g. pull requests from forks) the check is skipped.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: denylist
+        env:
+          DENYLIST: ${{ secrets.DENYLIST }}
+        run: |
+          if [ -z "$DENYLIST" ]; then
+            echo "DENYLIST secret not available - skipped"
+            exit 0
+          fi
+          files=$(grep -rIlEi "$DENYLIST" --exclude-dir=.git . || true)
+          if [ -n "$files" ]; then
+            echo "private identifiers found in:"
+            echo "$files"
+            exit 1
+          fi
+          echo "clean"

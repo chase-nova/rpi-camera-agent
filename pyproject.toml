@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dam-agent"
+version = "0.1.0"
+description = "days-in-a-minute capture agent for Raspberry Pi"
+requires-python = ">=3.11"
+# Device runtime only — no boto3 on devices (ADR-0003); the cloud side's
+# needs are in the `cloud` extra.
+dependencies = [
+    "python-dotenv",
+    "python-ulid",
+    "tzdata; platform_system == 'Windows'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "pillow",
+]
+cloud = [
+    "boto3",
+]
+
+[tool.setuptools]
+packages = ["agent", "dam_shared"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

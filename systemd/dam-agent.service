@@ -1,0 +1,23 @@
+[Unit]
+Description=days-in-a-minute capture agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# @AGENT_USER@ / @STAGE@ are filled in by scripts/install.sh (or deploy.sh).
+User=@AGENT_USER@
+# Layout: /opt/dam-agent holds the agent package, the stage env file
+# (.env.<stage>), and the venv (created with --system-site-packages so
+# apt's python3-picamera2 is visible). The device credential lives in
+# /var/lib/dam-agent (design 15 §6).
+WorkingDirectory=/opt/dam-agent
+Environment=STAGE=@STAGE@
+ExecStart=/opt/dam-agent/.venv/bin/python -m agent.main
+Restart=always
+RestartSec=5
+# request_stop drains the upload queue for up to ~10 s
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
