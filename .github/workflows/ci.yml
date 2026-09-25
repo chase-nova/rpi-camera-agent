@@ -1,7 +1,10 @@
 name: ci
 
+# main, release lines and pull requests only — tags and other branches do
+# not run (a tag points at a commit its branch already tested)
 on:
   push:
+    branches: [main, "release/**"]
   pull_request:
 
 permissions:
