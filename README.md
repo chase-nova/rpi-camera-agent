@@ -5,6 +5,11 @@ camera photographs its view every few seconds, and the service at
 [chase-nova.com](https://chase-nova.com) turns each day into a one-minute
 time-lapse video.
 
+> **Building your own camera?** Start with the step-by-step guide
+> **[DIY-rpi-dam-camera](https://github.com/chase-nova/DIY-rpi-dam-camera)**
+> (English · 한국어): hardware, lens, outdoor package, OS, this agent,
+> and connecting to your DAM account.
+
 This repository is the part that runs **on the Pi**. It captures frames,
 uploads them through short-lived presigned URLs (the device never holds
 cloud credentials), keeps frames on the SD card while the network is down
