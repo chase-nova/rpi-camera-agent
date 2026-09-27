@@ -23,6 +23,7 @@ from agent.config import (
     NIGHT_PROBE_SETTLE_S,
     NIGHT_REENTRY_COOLDOWN_S,
     NIGHT_SETTLE_MAX_FRAMES,
+    STARTUP_SETTLE_FRAMES,
 )
 from agent.constants import CAMERA_MODEL_ALIASES, FRAME_DURATION_MIN_US
 
@@ -180,8 +181,10 @@ class Picamera2Camera:
         raw_size: tuple[int, int] | None = None,
         clock: Callable[[], datetime] | None = None,
         night_fn: Callable[[], bool] | None = None,
+        stream_fps: float = 0.0,
     ) -> None:
         self._tz = tz
+        self._stream_fps = stream_fps
         self._size = size
         self._clock = clock if clock is not None else (lambda: datetime.now(tz))
         self._max_exposure_ms = max_exposure_ms
@@ -216,15 +219,9 @@ class Picamera2Camera:
             tuning = Picamera2.load_tuning_file(self._tuning_file)
         cam = Picamera2(tuning=tuning)
         controls: dict[str, Any] = {}
-        if self._max_exposure_ms > 0:
-            # Let AE extend exposure up to the configured ceiling at night
-            # (stock preview config caps frame duration at ~66 ms, which
-            # blinds low-light sensors like the IMX462 — see
-            # docs/reference/rpi-camera-list.md).
-            controls["FrameDurationLimits"] = (
-                FRAME_DURATION_MIN_US,
-                self._max_exposure_ms * 1000,
-            )
+        limits = self._capped_limits()
+        if limits is not None:
+            controls["FrameDurationLimits"] = limits
         kwargs: dict[str, Any] = {}
         if self._raw_size is not None:
             # Pin the sensor mode — some sensors' auto-picked video modes
@@ -237,9 +234,41 @@ class Picamera2Camera:
         )
         cam.configure(config)
         cam.start()
-        time.sleep(1)  # let AE/AWB settle after start, as the legacy code did
+        # let AE/AWB settle after start (legacy: 1 s); AE converges per
+        # frame, so at a capped stream rate give it enough frames
+        settle = 1.0
+        if self._stream_fps > 0:
+            settle = max(settle, STARTUP_SETTLE_FRAMES / self._stream_fps)
+        time.sleep(settle)
         self._cam = cam
         self.model = resolve_camera_model(cam.camera_properties.get("Model"))
+
+    def _uncapped_limits(self) -> tuple[int, int] | None:
+        """Frame-duration range without the stream cap. MAX_EXPOSURE_MS
+        (and a manual night exposure) must fit inside it: the stock preview
+        config caps frame duration at ~66 ms, which blinds low-light sensors
+        like the IMX462 — see docs/reference/rpi-camera-list.md."""
+        ceiling_ms = max(self._max_exposure_ms, self._night_exposure_ms)
+        if ceiling_ms <= 0:
+            return None  # libcamera's own default
+        return (FRAME_DURATION_MIN_US, ceiling_ms * 1000)
+
+    def _capped_limits(self) -> tuple[int, int] | None:
+        """Frame-duration range for normal streaming: at most stream_fps
+        frames per second, still long enough for the exposure ceiling."""
+        uncapped = self._uncapped_limits()
+        if self._stream_fps <= 0:
+            return uncapped
+        cap_us = int(1_000_000 / self._stream_fps)
+        return (cap_us, max(cap_us, uncapped[1] if uncapped else cap_us))
+
+    def _cap_controls(self, capped: bool) -> dict[str, Any]:
+        """FrameDurationLimits to switch the cap on/off; empty when the
+        cap is disabled (nothing to switch)."""
+        if self._stream_fps <= 0:
+            return {}
+        limits = self._capped_limits() if capped else self._uncapped_limits()
+        return {} if limits is None else {"FrameDurationLimits": limits}
 
     def capture_jpeg(self) -> tuple[bytes, datetime, dict[str, Any]]:
         if self._cam is None:
@@ -330,8 +359,10 @@ class Picamera2Camera:
         sensor and caps the lux estimate below NIGHT_LUX_OFF, so night
         mode exited dawn ~25 min late (measured 2026-08-22, a bench IMX462).
         The AE frames are metering-only; the uploaded frame is captured
-        only after the drain proves the manual exposure is live again."""
-        self._cam.set_controls({"AeEnable": True})
+        only after the drain proves the manual exposure is live again.
+        The stream cap is lifted for the probe: AE converges per frame and
+        a 2 fps stream gives it too few frames in NIGHT_PROBE_SETTLE_S."""
+        self._cam.set_controls({"AeEnable": True, **self._cap_controls(False)})
         time.sleep(NIGHT_PROBE_SETTLE_S)
         # discard queued manual-exposure frames; read lux from a real AE frame
         lux = self._drain_until(want_manual=False).get("Lux")
@@ -344,9 +375,12 @@ class Picamera2Camera:
                 "AeEnable": False,
                 "ExposureTime": self._night_exposure_ms * 1000,
                 "AnalogueGain": self._night_gain,
+                **self._cap_controls(True),
             })
             self._drain_until(want_manual=True)
         else:
+            if cap := self._cap_controls(True):
+                self._cam.set_controls(cap)
             log.info(
                 "night mode OFF (AE probe) lux=%.1f luma=%.0f",
                 -1.0 if lux is None else lux,
@@ -389,3 +423,6 @@ class Picamera2Camera:
             self._cam.stop()
             self._cam.close()
             self._cam = None
+        # a restarted camera comes up in AE: make the next capture re-apply
+        # the solar night exposure (the lux path re-probes by itself)
+        self._time_night = False

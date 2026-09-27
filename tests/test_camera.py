@@ -203,6 +203,53 @@ class TestAeProbe:
         assert cam._cam.consumed == 1 + NIGHT_SETTLE_MAX_FRAMES
 
 
+
+class TestStreamCap:
+    """45-3 (2026-09-27): the stock ~30 fps stream kept ~1 core busy between
+    captures; the cap limits it, and the night probe lifts it."""
+
+    def test_limits(self):
+        cam = Picamera2Camera(tz=TZ, stream_fps=2.0)
+        assert cam._capped_limits() == (500_000, 500_000)
+        assert cam._uncapped_limits() is None
+        night = Picamera2Camera(
+            tz=TZ, stream_fps=2.0, max_exposure_ms=1000, night_exposure_ms=250
+        )
+        assert night._capped_limits() == (500_000, 1_000_000)
+        assert night._uncapped_limits() == (33_333, 1_000_000)
+        off = Picamera2Camera(tz=TZ, max_exposure_ms=1000)
+        assert off._capped_limits() == (33_333, 1_000_000)  # stock behaviour
+        assert off._cap_controls(True) == {}
+
+    def _night_camera(self, frames, monkeypatch):
+        monkeypatch.setattr("agent.camera.time.sleep", lambda s: None)
+        cam = Picamera2Camera(
+            tz=TZ, night_exposure_ms=250, night_gain=2.0,
+            max_exposure_ms=1000, stream_fps=2.0,
+        )
+        cam._night.is_night = True
+        cam._cam = _FakeCam(frames)
+        return cam
+
+    def test_probe_lifts_cap_and_restores_it_with_manual(self, monkeypatch):
+        cam = self._night_camera([_ae_frame(0.5), _manual_frame()], monkeypatch)
+        cam._probe_ae()
+        assert cam._cam.controls_calls[0] == {
+            "AeEnable": True, "FrameDurationLimits": (33_333, 1_000_000),
+        }
+        last = cam._cam.controls_calls[-1]
+        assert last["FrameDurationLimits"] == (500_000, 1_000_000)
+        assert last["AeEnable"] is False
+
+    def test_probe_exit_restores_cap(self, monkeypatch):
+        cam = self._night_camera([_ae_frame(150.0)], monkeypatch)
+        for _ in range(3):
+            cam._probe_ae()
+        assert cam.is_night is False
+        assert cam._cam.controls_calls[-1] == {
+            "FrameDurationLimits": (500_000, 1_000_000),
+        }
+
 def test_pivariety_model_reports_real_sensor():
     from agent.camera import resolve_camera_model
     assert resolve_camera_model("arducam-pivariety") == "imx462"

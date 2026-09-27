@@ -199,3 +199,64 @@ def test_watchdog_quiet_while_loop_ticks():
 def test_no_real_network_is_touched():
     # Guard: the wiring test must never fall back to real urllib.
     assert urllib.request.urlopen is not None  # (sanity; fakes injected above)
+
+
+class CountingCamera(FakeCamera):
+    def __init__(self, tz):
+        super().__init__(tz, size=(160, 120))
+        self.starts = 0
+        self.stops = 0
+
+    def start(self):
+        super().start()
+        self.starts += 1
+
+    def stop(self):
+        super().stop()
+        self.stops += 1
+
+
+def test_thermal_pause_stops_camera_and_resume_restarts_it():
+    from zoneinfo import ZoneInfo
+
+    from agent.thermal import ThermalMonitor
+
+    temps = iter([70.0, 81.0, 90.0, 78.0, 77.0, 60.0])  # resume <= 77.5
+    camera = CountingCamera(ZoneInfo("Asia/Seoul"))
+    thermal = ThermalMonitor(
+        SETTINGS, read_temp=lambda: next(temps), read_throttle=lambda: "0x0"
+    )
+    agent = Agent(SETTINGS, camera=camera, urlopen=FakeHttp(), thermal=thermal)
+    camera.start()  # as run() does
+    gates = [agent._thermal_gate() for _ in range(6)]
+    assert gates == [True, False, False, False, True, True]
+    assert camera.stops == 1  # stopped once on entering the pause
+    assert camera.starts == 2  # initial + one restart on resume
+    agent.request_stop()
+
+
+def test_failed_restart_skips_and_retries():
+    from zoneinfo import ZoneInfo
+
+    from agent.thermal import ThermalMonitor
+
+    temps = iter([81.0, 70.0, 70.0])
+    camera = CountingCamera(ZoneInfo("Asia/Seoul"))
+    fail = {"left": 1}
+
+    def flaky_start():
+        if fail["left"]:
+            fail["left"] -= 1
+            raise RuntimeError("camera busy")
+        CountingCamera.start(camera)
+
+    thermal = ThermalMonitor(
+        SETTINGS, read_temp=lambda: next(temps), read_throttle=lambda: "0x0"
+    )
+    agent = Agent(SETTINGS, camera=camera, urlopen=FakeHttp(), thermal=thermal)
+    camera.start()
+    camera.start = flaky_start
+    assert [agent._thermal_gate() for _ in range(3)] == [False, False, True]
+    assert camera.starts == 2
+    agent.request_stop()
+

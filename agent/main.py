@@ -87,6 +87,7 @@ def build_camera(
         clock=clock,
         # manual night exposure must fit inside the frame duration limit
         max_exposure_ms=max(settings.max_exposure_ms, settings.night_exposure_ms),
+        stream_fps=settings.stream_fps,
         tuning_file=settings.tuning_file,
         night_exposure_ms=settings.night_exposure_ms,
         night_gain=settings.night_gain,
@@ -176,6 +177,11 @@ class Agent:
         )
         self.thermal = thermal if thermal is not None else ThermalMonitor(settings)
         self._thermal_status = ThermalStatus("ok", None, None, False)
+        # Thermal pause stops the camera (design 02 §5.2): a started
+        # Picamera2 streams and processes every sensor frame even when
+        # nothing is captured, so skipping captures alone left ~1 core busy
+        # (measured 45-3, 2026-09-27: 94 °C while "paused").
+        self._camera_rested = False
         self._poweroff = poweroff if poweroff is not None else _sudo_poweroff
         self._pi_model = read_pi_model()
         self._window_idle = False
@@ -217,9 +223,35 @@ class Agent:
             self._poweroff()
             return False
         if status.state == "paused":
+            self._rest_camera()
             # keep the manager informed while the camera rests
             self.uploader.send_heartbeat()
             return False
+        return self._wake_camera()
+
+    def _rest_camera(self) -> None:
+        """Stop the camera stream while thermally paused."""
+        if self._camera_rested or self.camera is None:
+            return
+        try:
+            self.camera.stop()
+        except Exception:
+            log.exception("camera stop on thermal pause failed")
+        self._camera_rested = True
+        log.warning("camera stopped (thermal pause)")
+
+    def _wake_camera(self) -> bool:
+        """Restart a rested camera; False = still down, skip this interval
+        (retried next interval; a hang is caught by the watchdog)."""
+        if not self._camera_rested or self.camera is None:
+            return True
+        try:
+            self.camera.start()
+        except Exception:
+            log.exception("camera restart after thermal pause failed")
+            return False
+        self._camera_rested = False
+        log.info("camera restarted (thermal resume)")
         return True
 
     def _remote_shutdown(self) -> None:

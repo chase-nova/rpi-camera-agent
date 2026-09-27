@@ -77,6 +77,13 @@ DEFAULT_NETWORK_REBOOT_AFTER_S = 3600
 # 0 keeps the stock picamera2 ceiling (~66 ms). Only useful on low-light
 # sensors (IMX462); keep well under the capture interval (48 s).
 DEFAULT_MAX_EXPOSURE_MS = 0
+# Camera stream rate between captures. A started camera processes every
+# sensor frame even though only one per interval is kept: the stock ~30 fps
+# stream cost ~1 core on a Pi 3 (measured 45-3, 2026-09-27). 2 fps keeps AE
+# and AWB tracking the scene; 0 = uncapped (stock rate).
+DEFAULT_STREAM_FPS = 2.0
+# Frames AE/AWB get to settle after a camera start at the capped rate.
+STARTUP_SETTLE_FRAMES = 8
 # Optional libcamera tuning file name (e.g. "imx219_noir.json" for
 # filterless NoIR modules). Empty = picamera2's automatic choice.
 DEFAULT_TUNING_FILE = ""
@@ -196,6 +203,7 @@ class Settings:
     temp_shutdown_c: float = DEFAULT_TEMP_SHUTDOWN_C
     temp_shutdown_enabled: bool = DEFAULT_TEMP_SHUTDOWN_ENABLED
     max_exposure_ms: int = DEFAULT_MAX_EXPOSURE_MS
+    stream_fps: float = DEFAULT_STREAM_FPS
     tuning_file: str | None = None
     night_exposure_ms: int = DEFAULT_NIGHT_EXPOSURE_MS
     night_gain: float = DEFAULT_NIGHT_GAIN
@@ -259,6 +267,10 @@ def load_settings(stage: str | None = None, env_file: Path | None = None) -> Set
     max_exposure_ms = int(values.get("MAX_EXPOSURE_MS", DEFAULT_MAX_EXPOSURE_MS))
     if max_exposure_ms < 0:
         raise ConfigError(f"MAX_EXPOSURE_MS must be >= 0, got {max_exposure_ms}")
+
+    stream_fps = float(values.get("STREAM_FPS", DEFAULT_STREAM_FPS))
+    if stream_fps < 0:
+        raise ConfigError(f"STREAM_FPS must be >= 0, got {stream_fps}")
 
     night_exposure_ms = int(
         values.get("NIGHT_EXPOSURE_MS", DEFAULT_NIGHT_EXPOSURE_MS)
@@ -338,6 +350,7 @@ def load_settings(stage: str | None = None, env_file: Path | None = None) -> Set
             values.get("TEMP_SHUTDOWN_ENABLED", DEFAULT_TEMP_SHUTDOWN_ENABLED)
         ),
         max_exposure_ms=max_exposure_ms,
+        stream_fps=stream_fps,
         tuning_file=values.get("TUNING_FILE", DEFAULT_TUNING_FILE) or None,
         night_exposure_ms=night_exposure_ms,
         night_gain=float(values.get("NIGHT_GAIN", DEFAULT_NIGHT_GAIN)),
